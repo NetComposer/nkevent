@@ -24,10 +24,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([find_server/1, find_all_servers/1, start_server/1]).
 -export([do_call/2]).
--export([start_link/3, get_all/0, remove_all/3, dump/3]).
+-export([start_link/3, get_all/0, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
-
 
 
 -include("nkevent.hrl").
@@ -45,6 +44,7 @@
 
 -define(MOVE_WAIT_TIME, 30000).
 
+%%-define(NO_NKDIST, 1).
 
 
 %% ===================================================================
@@ -74,7 +74,7 @@ do_find_server(Class, Sub, Type) ->
             case nkdist:get(nkevent, {Class, Sub, Type}, #{idx=>Class}) of
                 {ok, proc, [{_Meta, Pid}]} ->
                     {ok, Pid};
-                not_found ->
+                {error, _} ->
                     not_found
             end
     end.
@@ -118,17 +118,18 @@ start_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
             Spec = {
                 {Class, Sub, Type},
                 {?MODULE, start_link, [Class, Sub, Type]},
-                permanent,
+                temporary,
                 5000,
                 worker,
                 [?MODULE]
             },
             case supervisor:start_child(nkservice_events_sup, Spec) of
-                {ok, Pid}  -> Pid;
-                {error, {already_started, Pid}} -> Pid
+                {ok, Pid}  -> {ok, Pid};
+                {error, {already_started, Pid}} -> {ok, Pid};
+                {error, Error} -> {error, Error}
             end;
         true ->
-            Args = [?MODULE, {dist, Class, Sub, Type}],
+            Args = {dist, Class, Sub, Type},
             case nkdist:gen_server_start(nkevent, {Class, Sub, Type}, #{idx=>Class}, ?MODULE, Args, []) of
                 {ok, Pid} -> {ok, Pid};
                 {error, {already_registered, Pid}} -> {ok, Pid};
@@ -193,7 +194,11 @@ init({moved, Class, Sub, Type, Regs, Pid}) ->
     State1 = #state{class=Class, sub=Sub, type=Type},
     State2 = reg_all(maps:to_list(Regs), State1),
     ?LLOG(info, "starting server (~p)", [self()], State2),
-    {ok, State2}.
+    {ok, State2};
+
+init(Other) ->
+    lager:error("OOO: ~p", [Other]).
+
 
 
 %% @private
@@ -231,7 +236,7 @@ handle_call({call, Event}, _From, State) ->
     end;
 
 handle_call(dump, _From, #state{regs=Regs, pids=Pids}=State) ->
-    {reply, {lists:sort(maps:to_list(Regs)), lists:sort(maps:to_list(Pids))}, State};
+    {reply, {Regs, map_size(Regs), Pids, map_size(Pids)}, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -273,10 +278,17 @@ handle_cast({unreg, Event}, State) ->
     State2 = do_unreg([{SrvId, ObjId}], Pid, State),
     check_stop(State2);
 
-handle_cast(remove_all, #state{pids=Pids}=State) ->
-    ?LLOG(info, "remove all", [], State),
-    lists:foreach(fun({_Pid, {Mon, _}}) -> demonitor(Mon) end, maps:to_list(Pids)),
-    {noreply, State#state{regs=#{}, pids=#{}}};
+%%handle_cast(remove_all, #state{pids=Pids}=State) ->
+%%    ?LLOG(info, "remove all", [], State),
+%%    lists:foreach(fun({_Pid, {Mon, _}}) -> demonitor(Mon) end, maps:to_list(Pids)),
+%%    {noreply, State#state{regs=#{}, pids=#{}}};
+
+handle_cast({stop_after_last, Bool}, State) ->
+    State2 = State#state{stop_after_last = Bool},
+    check_stop(State2);
+
+handle_cast(stop, State) ->
+    {stop, normal, State};
 
 handle_cast(Msg, State) ->
     lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
@@ -306,7 +318,10 @@ handle_info({'DOWN', Mon, process, Pid, _Reason}, #state{pids=Pids}=State) ->
 %%    force_set_log(SrvId),
 %%    {noreply, State};
 
-handle_info({must_move, Node}, #state{class=Class, sub=Sub, type=Type, regs=Regs}=State) ->
+handle_info({nkdist, {vnode_pid, _Pid}}, State) ->
+    {noreply, State};
+
+handle_info({nkdist, {must_move, Node}}, #state{class=Class, sub=Sub, type=Type, regs=Regs}=State) ->
     case rpc:call(Node, gen_server, start, [?MODULE, {moved, Class, Sub, Type, Regs}, []]) of
         {ok, NewPid} ->
             ?LLOG(info, "starting move to ~p (~p -> ~p)", [Node, self(), NewPid], State),
@@ -473,9 +488,11 @@ do_reg_all(SrvId, ObjId, [{Pid, Body}|Rest], State) ->
 %%    put({?MODULE, SrvId}, Debug).
 
 
-%% @private
-has_nkdist() ->
-    is_pid(whereis(nkdist_sup)).
+-ifdef(NO_NKDIST).
+has_nkdist() -> false.
+-else.
+has_nkdist() -> is_pid(whereis(nkdist_sup)).
+-endif.
 
 
 %% @private
@@ -508,15 +525,15 @@ do_call(Event, Msg, Tries) ->
 
 
 
-%% @private
-remove_all(Class, Sub, Type) ->
-    Class2 = to_bin(Class),
-    Sub2 = to_bin(Sub),
-    Type2 = to_bin(Type),
-    case do_find_server(Class2, Sub2, Type2) of
-        {ok, Pid} -> gen_server:cast(Pid, remove_all);
-        not_found -> not_found
-    end.
+%%%% @private
+%%remove_all(Class, Sub, Type) ->
+%%    Class2 = to_bin(Class),
+%%    Sub2 = to_bin(Sub),
+%%    Type2 = to_bin(Type),
+%%    case do_find_server(Class2, Sub2, Type2) of
+%%        {ok, Pid} -> gen_server:cast(Pid, remove_all);
+%%        not_found -> not_found
+%%    end.
 
 
 %% @private
@@ -524,8 +541,8 @@ dump(Class, Sub, Type) ->
     Class2 = to_bin(Class),
     Sub2 = to_bin(Sub),
     Type2 = to_bin(Type),
-    Pids = find_all_servers(#nkevent{class=Class2, subclass=Sub2, type=Type2}),
-    [gen_server:call(Pid, dump) || Pid <- Pids].
+    {ok, Pid} = do_find_server(Class2, Sub2, Type2),
+    gen_server:call(Pid, dump).
 
 
 %% @private
@@ -547,20 +564,10 @@ basic_test_() ->
     {setup,
         fun() ->
             ?debugFmt("Starting ~p", [?MODULE]),
-            case do_find_server(<<"c">>, <<"s">>, <<"t">>) of
-                not_found ->
-                    {ok, _} = gen_server:start(?MODULE, [<<"c">>, <<"s">>, <<"t">>], []),
-                    do_stop;
-                _ ->
-                    remove_all(c, s, t),
-                    ok
-            end
+            test_reset()
         end,
-        fun(Stop) ->
-            case Stop of
-                do_stop -> catch exit(whereis(?MODULE), kill);
-                ok -> ok
-            end
+        fun(_Stop) ->
+            test_reset()
         end,
         [
             fun test1/0,
@@ -570,32 +577,48 @@ basic_test_() ->
     }.
 
 
+test_reset() ->
+    Ev = #nkevent{class = <<"c">>, subclass = <<"s">>, type = <<"t">>},
+    case find_server(Ev) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, stop),
+            timer:sleep(50);
+        not_found ->
+            ok
+    end.
+
+
+
 test1() ->
     Reg = #nkevent{class=c, subclass=s, type=t, srv_id=srv},
     Self = self(),
     nkevent:reg(Reg#nkevent{obj_id=id1, body=#{b1=>1}}),
     nkevent:reg(Reg#nkevent{obj_id=id2, body=#{b2=>2}}),
     {
-        [
-            {{srv, <<"id1">>}, [{Self, #{b1:=1}}]},
-            {{srv, <<"id2">>}, [{Self, #{b2:=2}}]}
-        ],
-        [
-            {Self, {_, [{srv, <<"id2">>}, {srv, <<"id1">>}]}}
-        ]
+        #{
+            {srv, <<"id1">>} := [{Self, #{b1:=1}}],
+            {srv, <<"id2">>} := [{Self, #{b2:=2}}]
+        },
+        2,
+        #{
+            Self := {_, [{srv, <<"id2">>}, {srv, <<"id1">>}]}
+        },
+        1
     } =
         dump(c, s, t),
 
     nkevent:unreg(Reg#nkevent{obj_id=id1}),
     {
-        [{{srv, <<"id2">>}, [{Self, #{b2:=2}}]}],
-        [{Self, {_, [{srv, <<"id2">>}]}}]
+        #{{srv, <<"id2">>} := [{Self, #{b2:=2}}]},
+        1,
+        #{Self := {_, [{srv, <<"id2">>}]}},
+        1
     } =
         dump(c, s, t),
 
     nkevent:unreg(Reg#nkevent{obj_id=id3}),
     nkevent:unreg(Reg#nkevent{obj_id=id2}),
-    {[], []} = dump(c, s, t),
+    {_, 0, _, 0} = dump(c, s, t),
     ok.
 
 
@@ -699,7 +722,7 @@ test2() ->
 
     [P ! stop || P <- [P1, P2, P3, P4, P5, P6, P7]],
     timer:sleep(50),
-    {[], []} = dump(c, s, t),
+    {_, 0, _, 0} = dump(c, s, t),
     ok.
 
 
@@ -711,59 +734,70 @@ test3() ->
     P5 = test_reg(3, b3),
     P6 = test_reg(3, b3b),
     P7 = test_reg(<<>>, b7),
-    timer:sleep(50),
+    timer:sleep(100),
 
     {
-        [
-            {{srv, <<>>},
-                [{P7, #{b7:=1}}]},
-            {{srv, <<"0">>},
-                [{P1, #{b1:=1}}, {P2, #{b1:=1}}, {P3, #{b1b:=1}}, {P4, #{b2:=1}},
-                    {P5, #{b3:=1}}, {P6, #{b3b:=1}}, {P7, #{b7:=1}}]},
-            {{srv, <<"1">>},
-                [{P1, #{b1:=1}}, {P2, #{b1:=1}}, {P3, #{b1b:=1}}]},
-            {{srv, <<"2">>},
-                [{P4, #{b2:=1}}]},
-            {{srv, <<"3">>},
-                [{P5, #{b3:=1}}, {P6, #{b3b:=1}}]}
-        ],
-        [
-            {P1, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
-            {P2, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
-            {P3, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
-            {P4, {_, [{srv, <<"0">>}, {srv, <<"2">>}]}},
-            {P5, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
-            {P6, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
-            {P7, {_, [{srv, <<"0">>}, {srv, <<>>}]}}
-        ]
+        #{
+            {srv, <<>>} := [{P7, #{b7:=1}}],
+            {srv, <<"0">>} := L1,
+            {srv, <<"1">>} := L2,
+            {srv, <<"2">>} := [{P4, #{b2:=1}}],
+            {srv, <<"3">>} := L3
+        },
+        5,
+        #{
+            P1 := {_, [{srv, <<"0">>}, {srv, <<"1">>}]},
+            P2 := {_, [{srv, <<"0">>}, {srv, <<"1">>}]},
+            P3 := {_, [{srv, <<"0">>}, {srv, <<"1">>}]},
+            P4 := {_, [{srv, <<"0">>}, {srv, <<"2">>}]},
+            P5 := {_, [{srv, <<"0">>}, {srv, <<"3">>}]},
+            P6 := {_, [{srv, <<"0">>}, {srv, <<"3">>}]},
+            P7 := {_, [{srv, <<"0">>}, {srv, <<>>}]}
+        },
+        7
     }
         = dump(c, s, t),
+
+    true = lists:sort(L1) == lists:sort(
+        [{P1, #{b1=>1}}, {P2, #{b1=>1}}, {P3, #{b1b=>1}}, {P4, #{b2=>1}},
+        {P5, #{b3=>1}}, {P6, #{b3b=>1}}, {P7, #{b7=>1}}]),
+
+    true = lists:sort(L2) == lists:sort(
+        [{P1, #{b1=>1}}, {P2, #{b1=>1}}, {P3, #{b1b=>1}}]),
+
+    true = lists:sort(L3) == lists:sort([{P5, #{b3=>1}}, {P6, #{b3b=>1}}]),
 
     P1 ! stop,
     P4 ! unreg,
     timer:sleep(100),
     {
-        [
-            {{srv, <<>>},
-                [{P7, #{b7:=1}}]},
-            {{srv, <<"0">>},
-                [{P2, #{b1:=1}}, {P3, #{b1b:=1}}, {P4, #{b2:=1}},
-                    {P5, #{b3:=1}}, {P6, #{b3b:=1}}, {P7, #{b7:=1}}]},
-            {{srv, <<"1">>},
-                [{P2, #{b1:=1}}, {P3, #{b1b:=1}}]},
-            {{srv, <<"3">>},
-                [{P5, #{b3:=1}}, {P6, #{b3b:=1}}]}
-        ],
-        [
-            {P2, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
-            {P3, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
-            {P4, {_, [{srv, <<"0">>}]}},
-            {P5, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
-            {P6, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
-            {P7, {_, [{srv, <<"0">>}, {srv, <<>>}]}}
-        ]
+        #{
+            {srv, <<>>} := [{P7, #{b7:=1}}],
+            {srv, <<"0">>} := L4,
+            {srv, <<"1">>} := L5,
+            {srv, <<"3">>} := L6
+        },
+        4,
+        #{
+            P2 := {_, [{srv, <<"0">>}, {srv, <<"1">>}]},
+            P3 := {_, [{srv, <<"0">>}, {srv, <<"1">>}]},
+            P4 := {_, [{srv, <<"0">>}]},
+            P5 := {_, [{srv, <<"0">>}, {srv, <<"3">>}]},
+            P6 := {_, [{srv, <<"0">>}, {srv, <<"3">>}]},
+            P7 := {_, [{srv, <<"0">>}, {srv, <<>>}]}
+        },
+        6
     } =
         dump(c, s, t),
+
+    true = lists:sort(L4) == lists:sort(
+        [{P2, #{b1=>1}}, {P3, #{b1b=>1}}, {P4, #{b2=>1}},
+            {P5, #{b3=>1}}, {P6, #{b3b=>1}}, {P7, #{b7=>1}}]),
+
+    true = lists:sort(L5) == lists:sort([{P2, #{b1=>1}}, {P3, #{b1b=>1}}]),
+
+    true = lists:sort(L6) == lists:sort([{P5, #{b3=>1}}, {P6, #{b3b=>1}}]),
+
 
     [P ! stop || P <- [P1, P2, P3, P4, P5, P6, P7]],
     ok.
@@ -781,7 +815,7 @@ test_reg(I, B) ->
 
 test_reg_loop(Pid, I) ->
     receive
-        {nkservice_event, Event} ->
+        {nkevent, Event} ->
             #nkevent{class= <<"c">>, subclass= <<"s">>, type= <<"t">>,
                 srv_id=srv, obj_id=Id, body=B} = Event,
             [{B1, 1}] = maps:to_list(B),

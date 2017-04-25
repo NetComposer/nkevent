@@ -23,6 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([send/1, reg/1, unreg/1]).
 -export([call/1]).
+-export([set_stop_after_last/2]).
 
 -include("nkevent.hrl").
 
@@ -135,3 +136,18 @@ unreg(Event) ->
         not_found ->
             ok
     end.
+
+
+%% @private
+set_stop_after_last(Event, Bool) when is_boolean(Bool) ->
+    Event2 = nkevent_util:normalize_self(Event),
+    case nkevent_srv:find_server(Event2) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, {stop_after_last, Bool});
+        not_found ->
+            ok
+    end.
+
+
+
+
