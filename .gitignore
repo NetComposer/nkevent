@@ -1,0 +1,16 @@
+*.o
+*.beam
+*.plt
+erl_crash.dump
+_build
+rebar3.crashdump
+rebar.lock
+.DS_Store
+data
+log
+rel
+/nkevent.version
+/include/nkevent_version.hrl
+/_checkouts
+/ebin
+/.rebar3

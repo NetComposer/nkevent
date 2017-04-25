@@ -1,0 +1,11 @@
+{application, nkevent, [
+    {description, "NetComposer Event Library"},
+    {vsn, "develop"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkevent_app, []}},
+    {applications, [
+        nklib
+    ]},
+    {env, []}
+]}.
