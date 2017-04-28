@@ -49,9 +49,9 @@ parse(Data) ->
 
 parse_subs(Data) ->
     case do_parse(Data, true) of
-        {ok, #nkevent{type=Types}=Event, Unrecognized} ->
+        {ok, #nkevent{type=Types}=Event} ->
             Events = [Event#nkevent{type=Type} || Type <- Types],
-            {ok, Events, Unrecognized};
+            {ok, Events};
         {error, Error} ->
             {error, Error}
     end.
@@ -65,7 +65,7 @@ do_parse(Data, Multi) ->
         subclass => binary,
         type =>
         case Multi of
-            true -> [binary, {list, binary}];
+            true -> {list, binary};
             false -> binary
         end,
         obj_id => binary,
@@ -82,21 +82,17 @@ do_parse(Data, Multi) ->
             #{
                 class := Class,
                 subclass := Sub,
-                type := Types,
+                type := Type,
                 obj_id := ObjId
             } = Parsed,
-            Event = lists:map(
-                fun(Type) ->
-                    #nkevent{
-                        srv_id = maps:get(srv_id, Data, undefined),
-                        class = Class,
-                        subclass = Sub,
-                        type = Type,
-                        obj_id = ObjId,
-                        body = maps:get(body, Parsed, #{})
-                    }
-                end,
-                Types),
+            Event = #nkevent{
+                srv_id = maps:get(srv_id, Data, undefined),
+                class = Class,
+                subclass = Sub,
+                type = Type,
+                obj_id = ObjId,
+                body = maps:get(body, Parsed, #{})
+            },
             {ok, Event};
         {ok, _, _, [Field|_]} ->
             {error, {unrecognized_field, Field}};
