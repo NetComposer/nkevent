@@ -37,7 +37,7 @@
     {ok, #nkevent{}} | {error, term()}.
 
 parse(#nkevent{}=Event) ->
-    {ok, Event, []};
+    {ok, Event};
 
 parse(Data) ->
     do_parse(Data, false).
