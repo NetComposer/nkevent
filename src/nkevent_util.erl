@@ -78,7 +78,7 @@ do_parse(Data, Multi) ->
         '__mandatory' => [class]
     },
     case nklib_syntax:parse(Data, Syntax) of
-        {ok, Parsed, _Exp, []} ->
+        {ok, Parsed, []} ->
             #{
                 class := Class,
                 subclass := Sub,
