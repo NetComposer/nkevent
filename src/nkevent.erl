@@ -105,23 +105,37 @@ do_call([Pid|Rest], Event) ->
 %% undefined service is used as 'all'
 %% you should monitor the pid() and re-register if it fails
 -spec reg(event()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, [pid()]} | {error, term()}.
 
 reg(Event) ->
+    case nkevent_util:parse_reg(Event) of
+        {ok, Events} ->
+            do_reg(Events, []);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+do_reg([], Acc) ->
+    {ok, Acc};
+
+do_reg([Event|Rest], Acc) ->
     Event2 = nkevent_util:normalize_self(Event),
     case nkevent_srv:find_server(Event2) of
         {ok, Pid} ->
             gen_server:cast(Pid, {reg, Event2}),
-            {ok, Pid};
+            do_reg(Rest, nklib_util:store_value(Pid, Acc));
         not_found ->
             case nkevent_srv:start_server(Event2) of
                 {ok, Pid} ->
                     gen_server:cast(Pid, {reg, Event2}),
-                    {ok, Pid};
+                    do_reg(Rest, nklib_util:store_value(Pid, Acc));
                 {error, Error} ->
                     {error, Error}
             end
     end.
+
 
 
 %% @doc
@@ -129,13 +143,26 @@ reg(Event) ->
     ok.
 
 unreg(Event) ->
+    case nkevent_util:parse_reg(Event) of
+        {ok, Events} ->
+            do_unreg(Events);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+%% @private
+do_unreg([]) ->
+    ok;
+
+do_unreg([Event|Rest]) ->
     Event2 = nkevent_util:normalize_self(Event),
     case nkevent_srv:find_server(Event2) of
         {ok, Pid} ->
             gen_server:cast(Pid, {unreg, Event2});
         not_found ->
             ok
-    end.
+    end,
+    do_unreg(Rest).
 
 
 %% @private

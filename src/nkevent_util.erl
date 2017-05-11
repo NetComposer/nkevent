@@ -21,7 +21,7 @@
 %% @doc Main functions
 -module(nkevent_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse/1, parse_subs/1, unparse/1]).
+-export([parse/1, parse_reg/1, unparse/1]).
 -export([normalize/1, normalize_self/1]).
 
 -include("nkevent.hrl").
@@ -36,18 +36,15 @@
 -spec parse(nkevent:event()) ->
     {ok, #nkevent{}} | {error, term()}.
 
-parse(#nkevent{}=Event) ->
-    {ok, Event};
-
 parse(Data) ->
     do_parse(Data, false).
 
 
 %% @doc
--spec parse_subs(nkevent:event()) ->
+-spec parse_reg(nkevent:event()) ->
     {ok, [#nkevent{}]} | {error, term()}.
 
-parse_subs(Data) ->
+parse_reg(Data) ->
     case do_parse(Data, true) of
         {ok, #nkevent{type=Types}=Event} ->
             Events = [Event#nkevent{type=Type} || Type <- Types],
@@ -58,6 +55,22 @@ parse_subs(Data) ->
 
 
 %% @private
+do_parse(#nkevent{type=Type}=Event, Multi) when is_list(Type) ->
+    case Multi of
+        true ->
+            {ok, Event};
+        false ->
+            {error, {syntax_error, <<"type">>}}
+    end;
+
+do_parse(#nkevent{type=Type}=Event, Multi) ->
+    case Multi of
+        true ->
+            {ok, Event#nkevent{type=[Type]}};
+        false ->
+            {ok, Event}
+    end;
+
 do_parse(Data, Multi) ->
     Syntax = #{
         srv_id => atom,
