@@ -82,11 +82,13 @@ do_parse(Data, Multi) ->
             false -> binary
         end,
         obj_id => binary,
+        domain => binary,
         body => map,
         '__defaults' => #{
             subclass => <<>>,
             type => <<>>,
-            obj_id => <<>>
+            obj_id => <<>>,
+            domain => <<>>
         },
         '__mandatory' => [class]
     },
@@ -96,7 +98,8 @@ do_parse(Data, Multi) ->
                 class := Class,
                 subclass := Sub,
                 type := Type,
-                obj_id := ObjId
+                obj_id := ObjId,
+                domain := Domain
             } = Parsed,
             Event = #nkevent{
                 srv_id = maps:get(srv_id, Data, undefined),
@@ -104,6 +107,7 @@ do_parse(Data, Multi) ->
                 subclass = Sub,
                 type = Type,
                 obj_id = ObjId,
+                domain = Domain,
                 body = maps:get(body, Parsed, #{})
             },
             {ok, Event};
@@ -161,6 +165,7 @@ normalize(Event) ->
         subclass = Sub,
         type = Type,
         obj_id = ObjId,
+        domain = Domain,
         body = Body,
         pid = Pid
     } = Event,
@@ -188,6 +193,7 @@ normalize(Event) ->
         subclass = to_bin(Sub),
         type = to_bin(Type),
         obj_id = to_bin(ObjId),
+        domain = to_bin(Domain),
         body = Body2,
         pid = Pid2
     }.
@@ -204,5 +210,6 @@ normalize_self(#nkevent{pid=Pid}=Event) ->
 
 
 %% @private
+to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
 

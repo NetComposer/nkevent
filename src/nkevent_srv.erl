@@ -152,7 +152,7 @@ get_all() ->
     class :: nkevent:class(),
     sub :: nkevent:subclass(),
     type :: nkevent:type(),
-    regs = #{} :: #{key() => [{pid(), nkevent:body()}]},
+    regs = #{} :: #{key() => [{pid(), nkevent:domain(), nkevent:body()}]},
     pids = #{} :: #{pid() => {Mon::reference(), [key()]}},
     moved_to = undefined :: pid(),
     stop_after_last = false :: boolean()
@@ -230,8 +230,8 @@ handle_call({call, Event}, _From, State) ->
             {reply, not_found, State};
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
-            {Pid, RegBody} = lists:nth(Pos, PidTerms),
-            send_events([{Pid, RegBody}], Event#nkevent{pid=undefined}, [], State),
+            {Pid, Dom, RegBody} = lists:nth(Pos, PidTerms),
+            send_events([{Pid, Dom, RegBody}], Event#nkevent{pid=undefined}, [], State),
             {reply, ok, State}
     end;
 
@@ -266,10 +266,10 @@ handle_cast({send, Event}, State) ->
     {noreply, State};
 
 handle_cast({reg, Event}, State) ->
-    #nkevent{srv_id=SrvId, obj_id=ObjId, body=Body, pid=Pid} = Event,
+    #nkevent{srv_id=SrvId, obj_id=ObjId, domain=Domain, body=Body, pid=Pid} = Event,
     % set_log(SrvId),
     ?LLOG(info, "registered ~s:~s (~p)", [SrvId, ObjId, Pid], State),
-    State2 = do_reg(SrvId, ObjId, Body, Pid, State),
+    State2 = do_reg(SrvId, ObjId, Domain, Body, Pid, State),
     {noreply, State2};
 
 handle_cast({unreg, Event}, State) ->
@@ -368,13 +368,13 @@ terminate(_Reason, State) ->
 
 
 %% @private
-do_reg(SrvId, ObjId, Body, Pid, #state{regs=Regs, pids=Pids}=State) ->
+do_reg(SrvId, ObjId, Domain, Body, Pid, #state{regs=Regs, pids=Pids}=State) ->
     Key = {SrvId, ObjId},
     PidBodyList2 = case maps:find(Key, Regs) of
-        {ok, PidBodyList} ->   % [{pid(), body)}]
-            lists:keystore(Pid, 1, PidBodyList, {Pid, Body});
+        {ok, PidBodyList} ->   % [{pid(), domain(), body)}]
+            lists:keystore(Pid, 1, PidBodyList, {Pid, Domain, Body});
         error ->
-            [{Pid, Body}]
+            [{Pid, Domain, Body}]
     end,
     Regs2 = maps:put(Key, PidBodyList2, Regs),
     {Mon2, Keys2} = case maps:find(Pid, Pids) of
@@ -423,19 +423,38 @@ do_unreg([Key|Rest], Pid, #state{regs=Regs, pids=Pids}=State) ->
 send_events([], _Event, Acc, _State) ->
     Acc;
 
-send_events([{Pid, _}|Rest], #nkevent{pid=PidE}=Event, Acc, State) when is_pid(PidE), Pid/=PidE ->
+send_events([{Pid, _Domain, _}|Rest], #nkevent{pid=PidE}=Event, Acc, State) when is_pid(PidE), Pid/=PidE ->
     send_events(Rest, Event, Acc, State);
 
-send_events([{Pid, RegBody}|Rest], Event, Acc, State) ->
+send_events([{Pid, RegDomain, RegBody}|Rest], Event, Acc, State) ->
     case lists:member(Pid, Acc) of
         false ->
-            #nkevent{body=Body}=Event,
-            Event2 = Event#nkevent{body=maps:merge(RegBody, Body)},
-            ?LLOG(info, "sending event ~p to ~p", [lager:pr(Event2, ?MODULE), Pid], State),
-            Pid ! {nkevent, Event2},
-            send_events(Rest, Event, [Pid|Acc], State);
+            #nkevent{domain=Domain, body=Body}=Event,
+            %% We are subscribed to any domain or the domain of the event
+            %% is longer than the registered domain
+            case check_domain(RegDomain, Domain) of
+                true ->
+                    Event2 = Event#nkevent{body=maps:merge(RegBody, Body)},
+                    ?LLOG(info,
+                        "sending event ~p to ~p", [lager:pr(Event2, ?MODULE), Pid], State),
+                    Pid ! {nkevent, Event2},
+                    send_events(Rest, Event, [Pid|Acc], State);
+                false ->
+                    send_events(Rest, Event, Acc, State)
+            end;
         true ->
             send_events(Rest, Event, Acc, State)
+    end.
+
+
+%% @private
+check_domain(<<>>, _) ->
+    true;
+check_domain(Reg, Domain) ->
+    Size = byte_size(Reg),
+    case Domain of
+        <<Reg:Size/binary, _/binary>> -> true;
+        _ -> false
     end.
 
 
@@ -447,7 +466,6 @@ check_stop(#state{pids=Pids, stop_after_last=Stop}=State) ->
         false ->
             {noreply, State}
     end.
-
 
 
 %% @private
@@ -463,8 +481,8 @@ reg_all([{{SrvId, ObjId}, PidBodyList}|Rest], State) ->
 do_reg_all(_Srv, _ObjId, [], State) ->
     State;
 
-do_reg_all(SrvId, ObjId, [{Pid, Body}|Rest], State) ->
-    State2 = do_reg(SrvId, ObjId, Body, Pid, State),
+do_reg_all(SrvId, ObjId, [{Pid, Domain, Body}|Rest], State) ->
+    State2 = do_reg(SrvId, ObjId, Domain, Body, Pid, State),
     do_reg_all(SrvId, ObjId, Rest, State2).
 
 %%
@@ -596,8 +614,8 @@ test1() ->
     nkevent:reg(Reg#nkevent{obj_id=id2, body=#{b2=>2}}),
     {
         #{
-            {srv, <<"id1">>} := [{Self, #{b1:=1}}],
-            {srv, <<"id2">>} := [{Self, #{b2:=2}}]
+            {srv, <<"id1">>} := [{Self, <<>>, #{b1:=1}}],
+            {srv, <<"id2">>} := [{Self, <<>>, #{b2:=2}}]
         },
         2,
         #{
@@ -609,7 +627,7 @@ test1() ->
 
     nkevent:unreg(Reg#nkevent{obj_id=id1}),
     {
-        #{{srv, <<"id2">>} := [{Self, #{b2:=2}}]},
+        #{{srv, <<"id2">>} := [{Self, <<>>, #{b2:=2}}]},
         1,
         #{Self := {_, [{srv, <<"id2">>}]}},
         1
@@ -738,10 +756,10 @@ test3() ->
 
     {
         #{
-            {srv, <<>>} := [{P7, #{b7:=1}}],
+            {srv, <<>>} := [{P7, <<>>, #{b7:=1}}],
             {srv, <<"0">>} := L1,
             {srv, <<"1">>} := L2,
-            {srv, <<"2">>} := [{P4, #{b2:=1}}],
+            {srv, <<"2">>} := [{P4, <<>>, #{b2:=1}}],
             {srv, <<"3">>} := L3
         },
         5,
@@ -759,20 +777,20 @@ test3() ->
         = dump(c, s, t),
 
     true = lists:sort(L1) == lists:sort(
-        [{P1, #{b1=>1}}, {P2, #{b1=>1}}, {P3, #{b1b=>1}}, {P4, #{b2=>1}},
-        {P5, #{b3=>1}}, {P6, #{b3b=>1}}, {P7, #{b7=>1}}]),
+        [{P1, <<>>, #{b1=>1}}, {P2, <<>>, #{b1=>1}}, {P3, <<>>, #{b1b=>1}}, {P4, <<>>, #{b2=>1}},
+        {P5, <<>>, #{b3=>1}}, {P6, <<>>, #{b3b=>1}}, {P7, <<>>, #{b7=>1}}]),
 
     true = lists:sort(L2) == lists:sort(
-        [{P1, #{b1=>1}}, {P2, #{b1=>1}}, {P3, #{b1b=>1}}]),
+        [{P1, <<>>, #{b1=>1}}, {P2, <<>>, #{b1=>1}}, {P3, <<>>, #{b1b=>1}}]),
 
-    true = lists:sort(L3) == lists:sort([{P5, #{b3=>1}}, {P6, #{b3b=>1}}]),
+    true = lists:sort(L3) == lists:sort([{P5, <<>>, #{b3=>1}}, {P6, <<>>   , #{b3b=>1}}]),
 
     P1 ! stop,
     P4 ! unreg,
     timer:sleep(100),
     {
         #{
-            {srv, <<>>} := [{P7, #{b7:=1}}],
+            {srv, <<>>} := [{P7, <<>>, #{b7:=1}}],
             {srv, <<"0">>} := L4,
             {srv, <<"1">>} := L5,
             {srv, <<"3">>} := L6
@@ -790,28 +808,52 @@ test3() ->
     } =
         dump(c, s, t),
 
-    true = lists:sort(L4) == lists:sort(
-        [{P2, #{b1=>1}}, {P3, #{b1b=>1}}, {P4, #{b2=>1}},
-            {P5, #{b3=>1}}, {P6, #{b3b=>1}}, {P7, #{b7=>1}}]),
+    true = lists:sort(L4) == lists:sort([
+            {P2, <<>>, #{b1=>1}},
+            {P3, <<>>, #{b1b=>1}},
+            {P4, <<>>, #{b2=>1}},
+            {P5, <<>>, #{b3=>1}},
+            {P6, <<>>, #{b3b=>1}},
+            {P7, <<>>, #{b7=>1}}
+    ]),
 
-    true = lists:sort(L5) == lists:sort([{P2, #{b1=>1}}, {P3, #{b1b=>1}}]),
+    true = lists:sort(L5) == lists:sort([{P2, <<>>, #{b1=>1}}, {P3, <<>>, #{b1b=>1}}]),
 
-    true = lists:sort(L6) == lists:sort([{P5, #{b3=>1}}, {P6, #{b3b=>1}}]),
-
+    true = lists:sort(L6) == lists:sort([{P5, <<>>, #{b3=>1}}, {P6, <<>>, #{b3b=>1}}]),
 
     [P ! stop || P <- [P1, P2, P3, P4, P5, P6, P7]],
     ok.
 
 
-test_reg(I, B) ->
+test4() ->
+    P1 = test_reg(4, <<"/a/b">>, b5),
+    timer:sleep(50),
     Reg = #nkevent{class=c, subclass=s, type=t, srv_id=srv},
+    nkevent:send(Reg#nkevent{obj_id=4, domain= <<"/a/b">>}),
+    nkevent:send(Reg#nkevent{obj_id=4, domain= <<"/a/b/c">>}),
+    nkevent:send(Reg#nkevent{obj_id=4, domain= <<"/a/">>}),
+    receive {c, P1, <<"4">>, b5} -> ok after 100 -> error(?LINE) end,
+    receive {c, P1, <<"4">>, b5} -> ok after 100 -> error(?LINE) end,
+    receive {c, P1, <<"4">>, b5} -> ok after 100 -> ok end,
+    P1 ! stop,
+    ok.
+
+
+
+test_reg(I, B) ->
+    test_reg(I, <<>>, B).
+
+
+test_reg(I, Domain, B) ->
+    Reg = #nkevent{class=c, subclass=s, type=t, domain=Domain, srv_id=srv},
     Self = self(),
     spawn(
         fun() ->
-            nkevent:reg(Reg#nkevent{obj_id=I, body=maps:put(B, 1, #{})}),
-            nkevent:reg(Reg#nkevent{obj_id=0, body=maps:put(B, 1, #{})}),
+            nkevent:reg(Reg#nkevent{obj_id=I, body=#{B=>1}}),
+            nkevent:reg(Reg#nkevent{obj_id=0, body=#{B=>1}}),
             test_reg_loop(Self, I)
         end).
+
 
 test_reg_loop(Pid, I) ->
     receive

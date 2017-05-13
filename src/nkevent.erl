@@ -42,6 +42,7 @@
         subclass => subclass(),
         type => type() | [type()],
         obj_id => obj_id(),
+        domain => domain(),
         body => body()
     }.
 
@@ -51,6 +52,7 @@
 -type subclass() :: atom() | binary().
 -type type() :: atom() | binary().
 -type obj_id() :: atom() | binary().
+-type domain() :: atom() | binary().
 -type body() :: map().
 
 
@@ -64,6 +66,7 @@
 %% to processes that registered any ObjId, any Type and any SubClass
 %% It is sent to processes that registered the included srv_id and also the ones that
 %% registered 'all'
+%% If domain is included, is used as a prefix
 %% If a pid is included in the event, it is sent only to that pid
 %% If a body is included, it will be merged with any registered process one
 %% Processed will receive and event {nkevent, Event}

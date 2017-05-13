@@ -31,6 +31,7 @@
     class :: nkevent:class(),
     subclass = <<>> :: nkevent:subclass(),
     type = <<>> :: nkevent:type() | [nkevent:type()],
+    domain = <<>> :: nkevent:domain(),
     obj_id = <<>> :: nkevent:obj_id(),
     body = #{} :: nkevent:body(),
     pid = undefined :: pid() | undefined,
