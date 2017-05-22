@@ -27,7 +27,7 @@
 
 
 -record(nkevent, {
-    srv_id :: nkevent:srv_id(),
+    srv_id = any :: nkevent:srv_id(),
     class :: nkevent:class(),
     subclass = <<>> :: nkevent:subclass(),
     type = <<>> :: nkevent:type() | [nkevent:type()],

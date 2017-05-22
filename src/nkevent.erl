@@ -37,7 +37,7 @@
 
 -type event_data() ::
     #{
-        srv_id => atom(),
+        srv_id => srv_id(),
         class => class(),
         subclass => subclass(),
         type => type() | [type()],
@@ -47,7 +47,7 @@
     }.
 
 % Native formats are binary. Atoms will be converted to binaries.
--type srv_id() :: atom() | all.
+-type srv_id() :: atom() | any.
 -type class() :: atom() | binary().
 -type subclass() :: atom() | binary().
 -type type() :: atom() | binary().
@@ -65,7 +65,7 @@
 %% It will be sent to processes that registered Class, SubClass, Type and ObjId, and also
 %% to processes that registered any ObjId, any Type and any SubClass
 %% It is sent to processes that registered the included srv_id and also the ones that
-%% registered 'all'
+%% registered 'any'
 %% If domain is included, is used as a prefix
 %% If a pid is included in the event, it is sent only to that pid
 %% If a body is included, it will be merged with any registered process one
@@ -76,7 +76,10 @@
 send(Event) ->
     Event2 = nkevent_util:normalize(Event),
     lists:foreach(
-        fun(Server) -> gen_server:cast(Server, {send, Event2}) end,
+        fun(Server) ->
+            %% lager:warning("SEND ~p", [Event2]),
+            gen_server:cast(Server, {send, Event2})
+        end,
         nkevent_srv:find_all_servers(Event2)).
 
 
@@ -105,7 +108,6 @@ do_call([Pid|Rest], Event) ->
 
 %% @doc Register to receive events
 %% missing or <<>> fields mean 'any'
-%% undefined service is used as 'all'
 %% you should monitor the pid() and re-register if it fails
 -spec reg(event()) ->
     {ok, [pid()]} | {error, term()}.

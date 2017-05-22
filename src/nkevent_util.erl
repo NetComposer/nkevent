@@ -169,10 +169,6 @@ normalize(Event) ->
         body = Body,
         pid = Pid
     } = Event,
-    SrvId2 = case SrvId of
-        undefined -> any;
-        _ -> SrvId
-    end,
     Body2 = case is_map(Body) of
         true ->
             Body;
@@ -188,7 +184,6 @@ normalize(Event) ->
             undefined
     end,
     Event#nkevent{
-        srv_id = SrvId2,
         class = to_bin(Class),
         subclass = to_bin(Sub),
         type = to_bin(Type),

@@ -62,15 +62,15 @@ find_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
 
 %% @private
 do_find_server(Class, Sub, Type) ->
-    case has_nkdist() of
-        false ->
-            case nklib_proc:values({?MODULE, Class, Sub, Type}) of
-                [{undefined, Pid}] ->
-                    {ok, Pid};
-                [] ->
-                    not_found
-            end;
-        true ->
+case has_nkdist() of
+    false ->
+        case nklib_proc:values({?MODULE, Class, Sub, Type}) of
+            [{undefined, Pid}] ->
+                {ok, Pid};
+            [] ->
+                not_found
+        end;
+    true ->
             case nkdist:get(nkevent, {Class, Sub, Type}, #{idx=>Class}) of
                 {ok, proc, [{_Meta, Pid}]} ->
                     {ok, Pid};
@@ -255,8 +255,8 @@ handle_cast({send, Event}, State) ->
     #nkevent{class=Class, srv_id=SrvId, obj_id=ObjId} = Event,
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     PidTerms2 = maps:get({SrvId, <<>>}, Regs, []),
-    PidTerms3 = maps:get({all, ObjId}, Regs, []),
-    PidTerms4 = maps:get({all, <<>>}, Regs, []),
+    PidTerms3 = maps:get({any, ObjId}, Regs, []),
+    PidTerms4 = maps:get({any, <<>>}, Regs, []),
     ?LLOG(info, "send ~s:~s ~p,~p,~p,~p",
         [SrvId, ObjId, PidTerms1, PidTerms2, PidTerms3, PidTerms4], State),
     Acc1 = send_events(PidTerms1, Event, [], State),
