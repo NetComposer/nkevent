@@ -160,7 +160,6 @@ unparse(Event) ->
 %% @private
 normalize(Event) ->
     #nkevent{
-        srv_id = SrvId,
         class = Class,
         subclass = Sub,
         type = Type,
