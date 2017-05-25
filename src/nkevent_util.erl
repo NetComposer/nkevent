@@ -21,7 +21,7 @@
 %% @doc Main functions
 -module(nkevent_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse/1, parse_reg/1, unparse/1]).
+-export([syntax/1, parse/1, parse_reg/1, unparse/1]).
 -export([normalize/1, normalize_self/1]).
 
 -include("nkevent.hrl").
@@ -31,6 +31,31 @@
 %% Public functions
 %% ===================================================================
 
+%% @doc
+-spec syntax(boolean()) ->
+    nklib_syntax().
+
+syntax(Multi) ->
+    #{
+        srv_id => atom,
+        class => binary,
+        subclass => binary,
+        type =>
+            case Multi of
+                true -> {list, binary};
+                false -> binary
+            end,
+        obj_id => binary,
+        domain => binary,
+        body => map,
+        '__defaults' => #{
+            subclass => <<>>,
+            type => <<>>,
+            obj_id => <<>>,
+            domain => <<>>
+        },
+        '__mandatory' => [class]
+    }.
 
 %% @doc Tries to parse a event-type object
 -spec parse(nkevent:event()) ->
@@ -72,26 +97,7 @@ do_parse(#nkevent{type=Type}=Event, Multi) ->
     end;
 
 do_parse(Data, Multi) ->
-    Syntax = #{
-        srv_id => atom,
-        class => binary,
-        subclass => binary,
-        type =>
-        case Multi of
-            true -> {list, binary};
-            false -> binary
-        end,
-        obj_id => binary,
-        domain => binary,
-        body => map,
-        '__defaults' => #{
-            subclass => <<>>,
-            type => <<>>,
-            obj_id => <<>>,
-            domain => <<>>
-        },
-        '__mandatory' => [class]
-    },
+    Syntax = syntax(Multi),
     case nklib_syntax:parse(Data, Syntax) of
         {ok, Parsed, []} ->
             #{
