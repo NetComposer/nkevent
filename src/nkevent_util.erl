@@ -33,7 +33,7 @@
 
 %% @doc
 -spec syntax(boolean()) ->
-    nklib_syntax().
+    nklib_syntax:syntax().
 
 syntax(Multi) ->
     #{
