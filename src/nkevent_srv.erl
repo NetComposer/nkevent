@@ -32,12 +32,6 @@
 -include("nkevent.hrl").
 
 
-%%-define(DEBUG(SrvId, Txt, Args, State),
-%%    case erlang:get({?MODULE, SrvId}) of
-%%        true -> ?LLOG(debug, Txt, Args, State);
-%%        _ -> ok
-%%    end).
-
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkEVENT '~s/~s/~s' "++Txt,
         [State#state.class, State#state.sub, State#state.type|Args])).
@@ -62,15 +56,15 @@ find_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
 
 %% @private
 do_find_server(Class, Sub, Type) ->
-case has_nkdist() of
-    false ->
-        case nklib_proc:values({?MODULE, Class, Sub, Type}) of
-            [{undefined, Pid}] ->
-                {ok, Pid};
-            [] ->
-                not_found
-        end;
-    true ->
+    case has_nkdist() of
+        false ->
+            case nklib_proc:values({?MODULE, Class, Sub, Type}) of
+                [{undefined, Pid}] ->
+                    {ok, Pid};
+                [] ->
+                    not_found
+            end;
+        true ->
             case nkdist:get(nkevent, {Class, Sub, Type}, #{idx=>Class}) of
                 {ok, proc, [{_Meta, Pid}]} ->
                     {ok, Pid};
@@ -172,7 +166,7 @@ init({Class, Sub, Type}) ->
     true = nklib_proc:reg({?MODULE, Class, Sub, Type}),
     nklib_proc:put(?MODULE, {Class, Sub, Type}),
     State = #state{class=Class, sub=Sub, type=Type},
-    ?LLOG(info, "starting server (~p)", [self()], State),
+    ?LLOG(debug, "starting server (~p)", [self()], State),
     {ok, State};
 
 init({dist, Class, Sub, Type}) ->
@@ -180,7 +174,7 @@ init({dist, Class, Sub, Type}) ->
         ok ->
             nklib_proc:put(?MODULE, {Class, Sub, Type}),
             State = #state{class=Class, sub=Sub, type=Type},
-            ?LLOG(info, "starting server (~p)", [self()], State),
+            ?LLOG(debug, "starting dist server (~p)", [self()], State),
             {ok, State};
         {error, {pid_conflict, Pid}} ->
             {stop, {already_registered, Pid}};
@@ -193,12 +187,8 @@ init({moved, Class, Sub, Type, Regs, Pid}) ->
     nklib_proc:put(?MODULE, {Class, Sub, Type}),
     State1 = #state{class=Class, sub=Sub, type=Type},
     State2 = reg_all(maps:to_list(Regs), State1),
-    ?LLOG(info, "starting server (~p)", [self()], State2),
-    {ok, State2};
-
-init(Other) ->
-    lager:error("OOO: ~p", [Other]).
-
+    ?LLOG(debug, "starting moved server (~p)", [self()], State2),
+    {ok, State2}.
 
 
 %% @private
@@ -206,7 +196,7 @@ init(Other) ->
     {reply, term(), #state{}} | {noreply, #state{}} | {stop, normal, ok, #state{}}.
 
 handle_call({call, Event}, _From, State) ->
-    #nkevent{class=Class, srv_id=SrvId, obj_id=ObjId} = Event,
+    #nkevent{class=Class, srv_id=SrvId, obj_id=ObjId, debug=Debug} = Event,
     #state{class=Class, regs=Regs} = State,
     PidTerms = case maps:get({SrvId, ObjId}, Regs, []) of
         [] ->
@@ -224,7 +214,12 @@ handle_call({call, Event}, _From, State) ->
         List ->
             List
     end,
-    ?LLOG(info, "call ~s:~s: ~p", [SrvId, ObjId, PidTerms], State),
+    case Debug of
+        true ->
+            ?LLOG(debug, "call ~s:~s: ~p", [SrvId, ObjId, PidTerms], State);
+        _ ->
+            ok
+    end,
     case PidTerms of
         [] ->
             {reply, not_found, State};
@@ -252,13 +247,18 @@ handle_cast({send, Event}, #state{moved_to=Pid}) when is_pid(Pid) ->
 
 handle_cast({send, Event}, State) ->
     #state{class=Class, regs=Regs} = State,
-    #nkevent{class=Class, srv_id=SrvId, obj_id=ObjId} = Event,
+    #nkevent{class=Class, srv_id=SrvId, obj_id=ObjId, debug=Debug} = Event,
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     PidTerms2 = maps:get({SrvId, <<>>}, Regs, []),
     PidTerms3 = maps:get({any, ObjId}, Regs, []),
     PidTerms4 = maps:get({any, <<>>}, Regs, []),
-    ?LLOG(info, "send ~s:~s ~p,~p,~p,~p",
-        [SrvId, ObjId, PidTerms1, PidTerms2, PidTerms3, PidTerms4], State),
+    case Debug of
+        true ->
+            ?LLOG(info, "send ~s:~s ~p,~p,~p,~p",
+                [SrvId, ObjId, PidTerms1, PidTerms2, PidTerms3, PidTerms4], State);
+        _ ->
+            ok
+    end,
     Acc1 = send_events(PidTerms1, Event, [], State),
     Acc2 = send_events(PidTerms2, Event, Acc1, State),
     Acc3 = send_events(PidTerms3, Event, Acc2, State),
@@ -266,15 +266,25 @@ handle_cast({send, Event}, State) ->
     {noreply, State};
 
 handle_cast({reg, Event}, State) ->
-    #nkevent{srv_id=SrvId, obj_id=ObjId, domain=Domain, body=Body, pid=Pid} = Event,
+    #nkevent{srv_id=SrvId, obj_id=ObjId, domain=Domain, body=Body, pid=Pid, debug=Debug} = Event,
     % set_log(SrvId),
-    ?LLOG(info, "registered ~s:~s (~p)", [SrvId, ObjId, Pid], State),
+    case Debug of
+        true ->
+            ?LLOG(debug, "registered ~s:~s (~p)", [SrvId, ObjId, Pid], State);
+        _ ->
+            ok
+    end,
     State2 = do_reg(SrvId, ObjId, Domain, Body, Pid, State),
     {noreply, State2};
 
 handle_cast({unreg, Event}, State) ->
-    #nkevent{srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
-    ?LLOG(info, "unregistered ~s:~s (~p)", [SrvId, ObjId, Pid], State),
+    #nkevent{srv_id=SrvId, obj_id=ObjId, pid=Pid, debug=Debug} = Event,
+    case Debug of
+        true ->
+            ?LLOG(debug, "unregistered ~s:~s (~p)", [SrvId, ObjId, Pid], State);
+        _ ->
+            ok
+    end,
     State2 = do_unreg([{SrvId, ObjId}], Pid, State),
     check_stop(State2);
 
@@ -302,11 +312,11 @@ handle_cast(Msg, State) ->
 handle_info({'DOWN', Mon, process, Pid, _Reason}, #state{pids=Pids}=State) ->
     case maps:find(Pid, Pids) of
         {ok, {Mon, Keys}} ->
-            lists:foreach(
-                fun({SrvId, ObjId}) ->
-                    ?LLOG(info, "unregistered ~s:~s (down)", [SrvId, ObjId], State)
-                end,
-                Keys),
+            %% lists:foreach(
+            %%    fun({SrvId, ObjId}) ->
+            %%        ?LLOG(info, "unregistered ~s:~s (down)", [SrvId, ObjId], State)
+            %%    end,
+            %%    Keys),
             State2 = do_unreg(Keys, Pid, State),
             check_stop(State2);
         error ->
@@ -429,14 +439,19 @@ send_events([{Pid, _Domain, _}|Rest], #nkevent{pid=PidE}=Event, Acc, State) when
 send_events([{Pid, RegDomain, RegBody}|Rest], Event, Acc, State) ->
     case lists:member(Pid, Acc) of
         false ->
-            #nkevent{domain=Domain, body=Body}=Event,
+            #nkevent{domain=Domain, body=Body, debug=Debug}=Event,
             %% We are subscribed to any domain or the domain of the event
             %% is longer than the registered domain
             case check_domain(RegDomain, Domain) of
                 true ->
                     Event2 = Event#nkevent{body=maps:merge(RegBody, Body)},
-                    ?LLOG(info,
-                        "sending event ~p to ~p", [lager:pr(Event2, ?MODULE), Pid], State),
+                    case Debug of
+                        true  ->
+                            ?LLOG(info,
+                                "sending event ~p to ~p", [lager:pr(Event2, ?MODULE), Pid], State);
+                        _ ->
+                            ok
+                    end,
                     Pid ! {nkevent, Event2},
                     send_events(Rest, Event, [Pid|Acc], State);
                 false ->

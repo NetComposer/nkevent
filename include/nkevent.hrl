@@ -35,6 +35,7 @@
     obj_id = <<>> :: nkevent:obj_id(),
     body = #{} :: nkevent:body(),
     pid = undefined :: pid() | undefined,
+    debug = false :: boolean(),
     meta = #{} :: map()
 }).
 
