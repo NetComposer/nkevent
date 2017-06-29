@@ -21,7 +21,7 @@
 %% @doc Main functions
 -module(nkevent_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/1, parse/1, parse_reg/1, unparse/1]).
+-export([syntax/1, parse/1, parse_reg/1, unparse/1, unparse2/1]).
 -export([normalize/1, normalize_self/1]).
 
 -include("nkevent.hrl").
@@ -128,7 +128,7 @@ do_parse(Data, Multi) ->
     end.
 
 
-%% @doc Tries to parse a event-type object
+%% @doc Serializes an event
 -spec unparse(#nkevent{}) ->
     map().
 
@@ -161,6 +161,45 @@ unparse(Event) ->
         end
     ],
     maps:from_list(lists:flatten(Base)).
+
+
+%% @doc Serializes an event
+-spec unparse2(#nkevent{}) ->
+    map().
+
+unparse2(Event) ->
+    #nkevent{
+        srv_id = _SrvId,
+        class = Class,
+        subclass = Sub,
+        type = Type,
+        obj_id = ObjId,
+        domain = Domain,
+        body = Body
+    } = Event,
+    Ev = case {Sub, Type} of
+        {<<>>, <<>>} -> Class;
+        {_, <<>>} -> <<Class/binary, $/, Sub/binary>>;
+        {<<>>, _} -> <<Class/binary, "/*/", Type/binary>>;
+        {_, _} -> <<Class/binary, $/, Sub/binary, $/, Type/binary>>
+    end,
+    Data1 = case is_map(Body) of
+        true -> Body;
+        _ -> #{}
+    end,
+    Data2 = case ObjId of
+        <<>> -> Data1;
+        _ -> Data1#{obj_id=>ObjId}
+    end,
+    Data3 = case Domain of
+        <<>> -> Data2;
+        _ -> Data2#{domain=>Domain}
+    end,
+    #{
+        event => Ev,
+        data => Data3
+    }.
+
 
 
 %% @private
