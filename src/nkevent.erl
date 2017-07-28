@@ -75,9 +75,10 @@
 
 send(Event) ->
     Event2 = nkevent_util:normalize(Event),
+    %lager:warning("EVENT ~p", [Event2]),
     lists:foreach(
         fun(Server) ->
-            %% lager:warning("SEND ~p", [Event2]),
+            %lager:warning("SEND ~p", [Server]),
             gen_server:cast(Server, {send, Event2})
         end,
         nkevent_srv:find_all_servers(Event2)).

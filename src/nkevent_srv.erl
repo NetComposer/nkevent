@@ -75,7 +75,7 @@ find_all_servers(#nkevent{class=Class, subclass=Sub, type=Type}) ->
         {_, <<>>} ->
             [{Class, Sub, <<>>}, {Class, <<>>, <<>>}];
         _ ->
-            [{Class, Sub, Type}, {Class, Sub, <<>>}, {Class, <<>>, <<>>}]
+            [{Class, Sub, Type}, {Class, Sub, <<>>}, {Class, <<>>, Type}, {Class, <<>>, <<>>}]
     end,
     find_add_servers(List, []).
 
