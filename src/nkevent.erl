@@ -127,19 +127,35 @@ do_reg([], Acc) ->
 
 do_reg([Event|Rest], Acc) ->
     Event2 = nkevent_util:normalize_self(Event),
-    case nkevent_srv:find_server(Event2) of
+    case do_reg_find(Event, 50) of
         {ok, Pid} ->
             gen_server:cast(Pid, {reg, Event2}),
             do_reg(Rest, nklib_util:store_value(Pid, Acc));
-        not_found ->
-            case nkevent_srv:start_server(Event2) of
-                {ok, Pid} ->
-                    gen_server:cast(Pid, {reg, Event2}),
-                    do_reg(Rest, nklib_util:store_value(Pid, Acc));
-                {error, Error} ->
-                    {error, Error}
-            end
+        error ->
+            {error, could_not_start_server}
     end.
+
+
+%% @private
+do_reg_find(Event, Count) when Count > 0 ->
+    case nkevent_srv:find_server(Event) of
+        {ok, Pid} ->
+            {ok, Pid};
+        not_found ->
+            case nkevent_srv:start_server(Event) of
+                {ok, Pid} ->
+                    {ok, Pid};
+                {error, Error} ->
+                    lager:notice("NkEVENT retrying registration: ~p", [Error]),
+                    timer:sleep(100),
+                    do_reg_find(Event, Count-1)
+            end
+    end;
+
+do_reg_find(Event, _Count) ->
+    lager:warning("NkEVENT could not register ~p", [lager:pr(Event, ?MODULE)]),
+    error.
+
 
 
 

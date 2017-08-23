@@ -52,5 +52,4 @@ init(ChildSpecs) ->
 
 %% @private
 start_events_sup() ->
-    supervisor:start_link({local, nkeevent_events_sup},
-        ?MODULE, {{one_for_one, 10, 60}, []}).
+    supervisor:start_link({local, nkevent_events_sup}, ?MODULE, {{one_for_one, 10, 60}, []}).

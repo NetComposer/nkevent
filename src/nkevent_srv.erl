@@ -56,21 +56,11 @@ find_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
 
 %% @private
 do_find_server(Class, Sub, Type) ->
-    case has_nkdist() of
-        false ->
-            case nklib_proc:values({?MODULE, Class, Sub, Type}) of
-                [{undefined, Pid}] ->
-                    {ok, Pid};
-                [] ->
-                    not_found
-            end;
-        true ->
-            case nkdist:get(nkevent, {Class, Sub, Type}, #{idx=>Class}) of
-                {ok, proc, [{_Meta, Pid}]} ->
-                    {ok, Pid};
-                {error, _} ->
-                    not_found
-            end
+    case global:whereis_name({?MODULE, Class, Sub, Type}) of
+        Pid when is_pid(Pid) ->
+            {ok, Pid};
+        undefined ->
+            not_found
     end.
 
 
@@ -96,8 +86,10 @@ find_add_servers([], Acc) ->
 
 find_add_servers([{Class, Sub, Type}|Rest], Acc) ->
     Acc2 = case do_find_server(Class, Sub, Type) of
-        {ok, Pid} -> [Pid|Acc];
-        not_found -> Acc
+        {ok, Pid} ->
+            [Pid|Acc];
+        not_found ->
+            Acc
     end,
     find_add_servers(Rest, Acc2).
 
@@ -106,30 +98,27 @@ find_add_servers([{Class, Sub, Type}|Rest], Acc) ->
 -spec start_server(#nkevent{}) ->
     {ok, pid()} | {error, term()}.
 
-start_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
-    case has_nkdist() of
-        false ->
-            Spec = {
-                {Class, Sub, Type},
-                {?MODULE, start_link, [Class, Sub, Type]},
-                temporary,
-                5000,
-                worker,
-                [?MODULE]
-            },
-            case supervisor:start_child(nkservice_events_sup, Spec) of
-                {ok, Pid}  -> {ok, Pid};
-                {error, {already_started, Pid}} -> {ok, Pid};
-                {error, Error} -> {error, Error}
-            end;
-        true ->
-            Args = {dist, Class, Sub, Type},
-            case nkdist:gen_server_start(nkevent, {Class, Sub, Type}, #{idx=>Class}, ?MODULE, Args, []) of
-                {ok, Pid} -> {ok, Pid};
-                {error, {already_registered, Pid}} -> {ok, Pid};
-                {error, Error} -> {error, Error}
-            end
+start_server(#nkevent{class=Class, subclass=Sub, type=Type}=Event) ->
+    Spec = {
+        {Class, Sub, Type},
+        {?MODULE, start_link, [Class, Sub, Type]},
+        transient,
+        5000,
+        worker,
+        [?MODULE]
+    },
+    case supervisor:start_child(nkevent_events_sup, Spec) of
+        {ok, undefined} ->
+            {error, started_elsewhere};
+        {ok, Pid}  ->
+            {ok, Pid};
+        {error, already_present} ->
+            ok = supervisor:delete_child(nkevent_events_sup, {Class, Sub, Type}),
+            start_server(Event);
+        {error, Error} ->
+            {error, Error}
     end.
+
 
 %% @private
 get_all() ->
@@ -148,7 +137,6 @@ get_all() ->
     type :: nkevent:type(),
     regs = #{} :: #{key() => [{pid(), nkevent:domain(), nkevent:body()}]},
     pids = #{} :: #{pid() => {Mon::reference(), [key()]}},
-    moved_to = undefined :: pid(),
     stop_after_last = false :: boolean()
 }).
 
@@ -163,32 +151,16 @@ start_link(Class, Sub, Type) ->
     {ok, #state{}}.
 
 init({Class, Sub, Type}) ->
-    true = nklib_proc:reg({?MODULE, Class, Sub, Type}),
-    nklib_proc:put(?MODULE, {Class, Sub, Type}),
-    State = #state{class=Class, sub=Sub, type=Type},
-    ?LLOG(debug, "starting server (~p)", [self()], State),
-    {ok, State};
-
-init({dist, Class, Sub, Type}) ->
-    case nkdist:register(proc, nkevent, {Class, Sub, Type}, #{idx=>Class}) of
-        ok ->
+    lager:warning("NKLOG STARTING SERVER ~p", [{Class, Sub, Type}]),
+    case global:register_name({?MODULE, Class, Sub, Type}, self(), fun global:random_notify_name/3) of
+        yes ->
             nklib_proc:put(?MODULE, {Class, Sub, Type}),
             State = #state{class=Class, sub=Sub, type=Type},
-            ?LLOG(debug, "starting dist server (~p)", [self()], State),
+            ?LLOG(debug, "starting server (~p)", [self()], State),
             {ok, State};
-        {error, {pid_conflict, Pid}} ->
-            {stop, {already_registered, Pid}};
-        {error, Error} ->
-            {stop, Error}
-    end;
-
-init({moved, Class, Sub, Type, Regs, Pid}) ->
-    ok = nkdist_reg:register(proc, nkevents, {Class, Sub, Type}, #{sync=>true, replace_pid=>Pid}),
-    nklib_proc:put(?MODULE, {Class, Sub, Type}),
-    State1 = #state{class=Class, sub=Sub, type=Type},
-    State2 = reg_all(maps:to_list(Regs), State1),
-    ?LLOG(debug, "starting moved server (~p)", [self()], State2),
-    {ok, State2}.
+        no ->
+            ignore
+    end.
 
 
 %% @private
@@ -241,9 +213,6 @@ handle_call(Msg, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}}.
-
-handle_cast({send, Event}, #state{moved_to=Pid}) when is_pid(Pid) ->
-    gen_server:cast(Pid, {send, Event});
 
 handle_cast({send, Event}, State) ->
     #state{class=Class, regs=Regs} = State,
@@ -328,25 +297,8 @@ handle_info({'DOWN', Mon, process, Pid, _Reason}, #state{pids=Pids}=State) ->
 %%    force_set_log(SrvId),
 %%    {noreply, State};
 
-handle_info({nkdist, {vnode_pid, _Pid}}, State) ->
-    {noreply, State};
-
-handle_info({nkdist, {must_move, Node}}, #state{class=Class, sub=Sub, type=Type, regs=Regs}=State) ->
-    case rpc:call(Node, gen_server, start, [?MODULE, {moved, Class, Sub, Type, Regs}, []]) of
-        {ok, NewPid} ->
-            ?LLOG(info, "starting move to ~p (~p -> ~p)", [Node, self(), NewPid], State),
-            erlang:send_after(?MOVE_WAIT_TIME, self(), move_completed),
-            {noreply, State#state{moved_to=NewPid}};
-        {error, Error} ->
-            ?LLOG(warning, "could not move process to ~p: ~p", [Node, Error], State),
-            {noreply, State}
-    end;
-
-handle_info({vnode_pid, _Pid}, State) ->
-    {noreply, State};
-
-handle_info(move_completed, State) ->
-    ?LLOG(info, "move completed", [], State),
+handle_info({global_name, conflict, _Name}, State) ->
+    lager:notice("NkEVENT server stopping because of conflict"),
     {stop, normal, State};
 
 handle_info(Info, State) ->
@@ -519,13 +471,6 @@ do_reg_all(SrvId, ObjId, [{Pid, Domain, Body}|Rest], State) ->
 %%        _ -> false
 %%    end,
 %%    put({?MODULE, SrvId}, Debug).
-
-
--ifdef(NO_NKDIST).
-has_nkdist() -> false.
--else.
-has_nkdist() -> is_pid(whereis(nkdist_sup)).
--endif.
 
 
 %% @private
