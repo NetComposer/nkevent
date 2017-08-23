@@ -128,7 +128,7 @@ do_reg([], Acc) ->
 
 do_reg([Event|Rest], Acc) ->
     Event2 = nkevent_util:normalize_self(Event),
-    case do_reg_find(Event, 50) of
+    case do_reg_find(Event2, 50) of
         {ok, Pid} ->
             gen_server:cast(Pid, {reg, Event2}),
             do_reg(Rest, nklib_util:store_value(Pid, Acc));

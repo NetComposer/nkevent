@@ -23,7 +23,6 @@
 -behaviour(gen_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([find_server/1, find_all_servers/1, start_server/1]).
--export([do_call/2]).
 -export([start_link/3, get_all/0, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -56,7 +55,7 @@ find_server(#nkevent{class=Class, subclass=Sub, type=Type}) ->
 
 %% @private
 do_find_server(Class, Sub, Type) ->
-    case global:whereis_name({?MODULE, Class, Sub, Type}) of
+    case global:whereis_name({?MODULE, {Class, Sub, Type}}) of
         Pid when is_pid(Pid) ->
             {ok, Pid};
         undefined ->
@@ -122,7 +121,10 @@ start_server(#nkevent{class=Class, subclass=Sub, type=Type}=Event) ->
 
 %% @private
 get_all() ->
-    nklib_proc:values(?MODULE).
+    [
+        {Spec, global:whereis_name({?MODULE, Spec})}
+        || {?MODULE, Spec} <- global:registered_names()
+    ].
 
 
 %% ===================================================================
@@ -151,8 +153,7 @@ start_link(Class, Sub, Type) ->
     {ok, #state{}}.
 
 init({Class, Sub, Type}) ->
-    lager:warning("NKLOG STARTING SERVER ~p", [{Class, Sub, Type}]),
-    case global:register_name({?MODULE, Class, Sub, Type}, self(), fun global:random_notify_name/3) of
+    case global:register_name({?MODULE, {Class, Sub, Type}}, self(), fun global:random_notify_name/3) of
         yes ->
             nklib_proc:put(?MODULE, {Class, Sub, Type}),
             State = #state{class=Class, sub=Sub, type=Type},
@@ -473,33 +474,33 @@ do_reg_all(SrvId, ObjId, [{Pid, Domain, Body}|Rest], State) ->
 %%    put({?MODULE, SrvId}, Debug).
 
 
-%% @private
-do_call(Event, Msg) ->
-    do_call(Event, Msg, 5).
+%%%% @private
+%%do_call(Event, Msg) ->
+%%    do_call(Event, Msg, 5).
 
 
-%% @private
-do_call(_Event, _Msg, 0) ->
-    {error, no_process};
-
-do_call(Event, Msg, Tries) ->
-    case find_server(Event) of
-        {ok, Pid} ->
-            case nklib_util:call(Pid, Msg, 5000) of
-                ok ->
-                    ok;
-                {error, _} ->
-                    timer:sleep(1000),
-                    do_call(Event, Msg, Tries-1)
-            end;
-        not_found ->
-            case start_server(Event) of
-                {ok, _} ->
-                    do_call(Event, Msg, Tries-1);
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
+%%%% @private
+%%do_call(_Event, _Msg, 0) ->
+%%    {error, no_process};
+%%
+%%do_call(Event, Msg, Tries) ->
+%%    case find_server(Event) of
+%%        {ok, Pid} ->
+%%            case nklib_util:call(Pid, Msg, 5000) of
+%%                ok ->
+%%                    ok;
+%%                {error, _} ->
+%%                    timer:sleep(1000),
+%%                    do_call(Event, Msg, Tries-1)
+%%            end;
+%%        not_found ->
+%%            case start_server(Event) of
+%%                {ok, _} ->
+%%                    do_call(Event, Msg, Tries-1);
+%%                {error, Error} ->
+%%                    {error, Error}
+%%            end
+%%    end.
 
 
 
