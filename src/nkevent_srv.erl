@@ -534,10 +534,10 @@ to_bin(Term) -> nklib_util:to_binary(Term).
 %% ===================================================================
 
 
--define(TEST, 1).
+%-define(TEST, 1).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--compile([export_all]).
+%-compile([export_all]).
 
 basic_test_() ->
     {setup,
