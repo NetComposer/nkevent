@@ -436,22 +436,22 @@ check_stop(#state{pids=Pids, stop_after_last=Stop}=State) ->
     end.
 
 
-%% @private
-reg_all([], State) ->
-    State;
+% %% @private
+% reg_all([], State) ->
+%     State;
 
-reg_all([{{SrvId, ObjId}, PidBodyList}|Rest], State) ->
-    State2 = do_reg_all(SrvId, ObjId, PidBodyList, State),
-    reg_all(Rest, State2).
+% reg_all([{{SrvId, ObjId}, PidBodyList}|Rest], State) ->
+%     State2 = do_reg_all(SrvId, ObjId, PidBodyList, State),
+%     reg_all(Rest, State2).
 
 
-%% @private
-do_reg_all(_Srv, _ObjId, [], State) ->
-    State;
+% %% @private
+% do_reg_all(_Srv, _ObjId, [], State) ->
+%     State;
 
-do_reg_all(SrvId, ObjId, [{Pid, Domain, Body}|Rest], State) ->
-    State2 = do_reg(SrvId, ObjId, Domain, Body, Pid, State),
-    do_reg_all(SrvId, ObjId, Rest, State2).
+% do_reg_all(SrvId, ObjId, [{Pid, Domain, Body}|Rest], State) ->
+%     State2 = do_reg(SrvId, ObjId, Domain, Body, Pid, State),
+%     do_reg_all(SrvId, ObjId, Rest, State2).
 
 %%
 %%%% @private
